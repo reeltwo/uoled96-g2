@@ -1,0 +1,106 @@
+#platform "GOLDELOX"
+
+#inherit "4DGL_16bitColours.fnc"
+
+var com_buffer[1];
+
+func main()
+    setbaud(BAUD_9600);
+    com_Init(com_buffer, 1, 0);
+    gfx_ScreenMode(LANDSCAPE_R);
+    gfx_Cls();
+
+    while(!media_Init())
+        putstr("Insert SD...");
+        pause(1000);
+        gfx_Cls();
+        pause(1000);
+    wend
+
+    while(1 == 1)
+        media_SetAdd(0x0000, 0x0000);
+        if (media_ReadWord() == 0xC0FF && media_ReadByte() == 0xEE)
+            break;
+        endif
+        putstr("Invalid SD...");
+        pause(1000);
+        gfx_Cls();
+        pause(1000);
+    wend
+
+    var num_movies;
+    var auto_play_mask;
+    var auto_play_delay;
+    var auto_play_flags;
+    var auto_play_current := 0;
+    num_movies := media_ReadByte();
+    auto_play_mask := media_ReadWord();
+    auto_play_delay := media_ReadWord();
+    auto_play_flags := media_ReadWord();
+
+    var t;
+    var selectMovie := -1;
+    var frameIndex;
+    var framesRemaining;
+    repeat
+      frameIndex := 0;
+      framesRemaining := 1;
+
+      if (auto_play_mask != 0)
+        while (selectMovie == -1)
+          if (auto_play_mask & (1<<auto_play_current))
+            selectMovie := auto_play_current;
+            auto_play_current += 1;
+            break;
+          endif
+          auto_play_current += 1;
+          if (auto_play_current == 16)
+             if ((auto_play_flags & 1) == 0)
+               auto_play_mask := 0;
+               auto_play_delay := 0;
+               break;
+             else
+               auto_play_current := 0;
+             endif
+          endif
+        wend
+      endif
+      if (selectMovie != -1)
+        media_SetAdd(0x0000, 0x0002);
+        num_movies := media_ReadByte();
+        if (selectMovie >= num_movies)
+            selectMovie := 0;
+        endif
+
+        media_SetAdd(0x0000, 0x000A + (selectMovie * 4));
+        media_SetSector(media_ReadWord(), media_ReadWord());
+        selectMovie := -1;
+        while (frameIndex < framesRemaining && !com_Full())
+            framesRemaining := media_VideoFrame(0, 0, frameIndex);
+            frameIndex++;
+        wend
+      endif
+      if (auto_play_mask != 0 && auto_play_delay != 0)
+        gfx_Cls();
+        t := auto_play_delay;
+        while (t > 0 && !com_Full())
+          pause(100);
+          t := t - 1;
+        wend
+      endif
+      if (com_Full())
+         auto_play_mask := 0;
+         auto_play_delay := 0;
+      endif
+      if (auto_play_mask == 0)
+        while (selectMovie < 0)
+          gfx_Cls();
+          while (!com_Full());
+          selectMovie := com_buffer[0] - 1;
+          com_Reset();
+        wend
+      endif
+    forever
+
+endfunc
+
