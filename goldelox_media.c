@@ -52,6 +52,11 @@ int main(int argc, const char* argv[])
 	char** filenames = NULL;
 	char* tmp_dirname = NULL;
 	char auto_play_loop = 0;
+    unsigned dest_video_fps = 33;
+    unsigned dest_video_width = 96;
+    unsigned dest_video_height = 64;
+    const char* dest_video_xform = "vflip,hflip";
+    const char* dest_video_fmt = "rgb565le";
 	unsigned short auto_play_delay = 0;
 	unsigned short auto_play_mask = 0;
 	unsigned long numBytesWritten = 0;
@@ -73,6 +78,60 @@ int main(int argc, const char* argv[])
     		retcode = 1;
     		goto done;
     	}
+        else if (strcmp(argv[i], "-s") == 0)
+        {
+            if (i + 1 < argc)
+            {
+                if (sscanf(argv[i+1], "%ux%u", &dest_video_width, &dest_video_height) != 2)
+                {
+                    fprintf(stderr, "Invalid scaling option (<width>x<height> e.g. \"96x64\"\n");
+                    retcode = 1;
+                    goto done;
+                }
+                break;
+            }
+            fprintf(stderr, "Missing scaling option\n");
+            retcode = 1;
+            goto done;
+        }
+        else if (strcmp(argv[i], "-fps") == 0)
+        {
+            if (i + 1 < argc)
+            {
+                if (sscanf(argv[i+1], "%u", &dest_video_fps) != 1)
+                {
+                    fprintf(stderr, "Invalid frame rate option (expecting integer)\n");
+                    retcode = 1;
+                    goto done;
+                }
+                break;
+            }
+            fprintf(stderr, "Missing frame rate option\n");
+            retcode = 1;
+            goto done;
+        }
+        else if (strcmp(argv[i], "-fmt") == 0)
+        {
+            if (i + 1 < argc)
+            {
+                dest_video_fmt = argv[i+1];
+                break;
+            }
+            fprintf(stderr, "Missing video format\n");
+            retcode = 1;
+            goto done;
+        }
+        else if (strcmp(argv[i], "-xform") == 0)
+        {
+            if (i + 1 < argc)
+            {
+                dest_video_xform = argv[i+1];
+                break;
+            }
+            fprintf(stderr, "Missing video transform option\n");
+            retcode = 1;
+            goto done;
+        }
     }
 
 	fout = fopen(outname, "wb+");
@@ -101,6 +160,7 @@ int main(int argc, const char* argv[])
 		goto done;
 	}
 
+//#define FPS_10
     for (int i = 1; i < argc; i++)
     {
     	unsigned int padBytes = 0;
@@ -113,7 +173,12 @@ int main(int argc, const char* argv[])
 		unsigned int width;
 		unsigned int height;
     	const char* moviename = argv[i];
-    	const char* scaling_arg = "-s 96x64 ";
+    #ifdef FPS_10
+        const int FPS = 10;
+    #else
+        const int FPS = 33;
+    #endif
+        const char* tmpmoviename = "__tmp__.mov";
 
     	if (strncmp(moviename, "-auto-play:", strlen("-auto-play:")) == 0)
     	{
@@ -137,13 +202,27 @@ int main(int argc, const char* argv[])
     		auto_play_delay = atoi(moviename + strlen("-auto-play-delay:"));
     		continue;
     	}
-    	else if (strcmp(moviename, "-out") == 0)
+    	else if (strcmp(moviename, "-out") == 0 || strcmp(moviename, "-s") == 0 ||
+                 strcmp(moviename, "-fps") == 0 || strcmp(moviename, "-fmt") == 0 ||
+                 strcmp(moviename, "-xform") == 0)
     	{
     		i += 1;
     		continue;
     	}
 
-		snprintf(cmdbuffer, sizeof(cmdbuffer), "ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 %s", moviename);
+    #if 1//def FPS_10
+        snprintf(cmdbuffer, sizeof(cmdbuffer), "ffmpeg -y -i %s -filter:v fps=fps=%d -hide_banner %s", moviename, FPS, tmpmoviename);
+        if (system(cmdbuffer) != 0)
+        {
+            fprintf(stderr, "Failed to execute: \"%s\"\n", cmdbuffer);
+            retcode = 1;
+            goto done;
+        }
+    #else
+        const char* tmpmoviename = moviename;
+    #endif
+
+		snprintf(cmdbuffer, sizeof(cmdbuffer), "ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 %s", tmpmoviename);
 		cmdf = popen(cmdbuffer, "r");
 		if (cmdf == NULL)
 		{
@@ -168,7 +247,7 @@ int main(int argc, const char* argv[])
 		}
 
 
-		snprintf(cmdbuffer, sizeof(cmdbuffer), "ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 %s", moviename);
+		snprintf(cmdbuffer, sizeof(cmdbuffer), "ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 %s", tmpmoviename);
 		cmdf = popen(cmdbuffer, "r");
 		if (cmdf == NULL)
 		{
@@ -185,10 +264,15 @@ int main(int argc, const char* argv[])
 		pclose(cmdf);
 		cmdf = NULL;
 
-		if (width == 96 && height == 64)
-			scaling_arg = "";
-		//-framerate 30 
-		snprintf(cmdbuffer, sizeof(cmdbuffer), "ffmpeg -i %s -vf \"vflip,hflip\" %s-vsync vfr -pix_fmt rgb565be %s/frame%%04d.raw -hide_banner", moviename, scaling_arg, tmp_dirname);
+        char scaling_arg[50];
+        *scaling_arg = 0;
+        if (width != dest_video_width || height != dest_video_height)
+            snprintf(scaling_arg, sizeof(scaling_arg), "-s %ux%u ", dest_video_width, dest_video_height);
+
+        if (*dest_video_xform != 0)
+		  snprintf(cmdbuffer, sizeof(cmdbuffer), "ffmpeg -i %s -vf \"%s\" %s-vsync vfr -pix_fmt %s %s/frame%%04d.raw -hide_banner", tmpmoviename, dest_video_xform, scaling_arg, dest_video_fmt, tmp_dirname);
+        else
+          snprintf(cmdbuffer, sizeof(cmdbuffer), "ffmpeg -i %s %s-vsync vfr -pix_fmt %s %s/frame%%04d.raw -hide_banner", tmpmoviename, scaling_arg, dest_video_fmt, tmp_dirname);
 		if (system(cmdbuffer) != 0)
 		{
 			fprintf(stderr, "Failed to execute: \"%s\"\n", cmdbuffer);
