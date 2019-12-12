@@ -211,7 +211,8 @@ static int close_serial(int fd)
 
 int main(int argc, const char* argv[])
 {
-    const char* ID_STR = "uOLED96-G2\n96x64\n";
+    const char* ID_STR_UOLED96_G2 = "uOLED96-G2\n96x64\n";
+    const char* ID_STR_UOLED128_G2 = "uOLED128-G2\n128x128\n";
     int trycount = 0;
     if (argc < 2)
     {
@@ -289,9 +290,10 @@ int main(int argc, const char* argv[])
         }
         if (n > 0 && buf[n-1] == 6)
             buf[n-1] = 0;
-        if (strncmp(buf, ID_STR, strlen(ID_STR)) != 0)
+        if (strncmp(buf, ID_STR_UOLED96_G2, strlen(ID_STR_UOLED96_G2)) != 0 &&
+            strncmp(buf, ID_STR_UOLED128_G2, strlen(ID_STR_UOLED128_G2)) != 0)
         {
-            printf("Unknown device\n");
+            printf("Unknown device: %s\n", buf);
             goto err;
         }
         printf("Found uOLED device\n");
